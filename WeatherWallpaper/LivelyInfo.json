@@ -1,0 +1,14 @@
+{
+  "AppVersion": "2.2.1.0",
+  "Title": "实时天气壁纸",
+  "Thumbnail": "thumbnail.jpg",
+  "Preview": null,
+  "Desc": "实时天气动态壁纸，昼夜联动、天气特效与待办清单",
+  "Author": "mzy",
+  "License": "",
+  "Contact": "",
+  "Type": 1,
+  "FileName": "index.html",
+  "Arguments": null,
+  "IsAbsolutePath": false
+}

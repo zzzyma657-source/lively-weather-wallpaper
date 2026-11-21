@@ -1,0 +1,1850 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>实时天气场景壁纸</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M9 22a6 6 0 0 1-.8-11.95 8 8 0 0 1 15.3 2.2A5.2 5.2 0 0 1 23 22z' fill='%23dce8f4'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --panel-bg: rgba(13,21,32,.72);
+    --panel-border: rgba(255,255,255,.12);
+    --text: #eef4fa;
+    --text-dim: #a9bccf;
+    --accent: #6fb6e8;
+    --accent-soft: rgba(111,182,232,.18);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden}
+  body{
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    color:var(--text);background:#0a1626;
+  }
+
+  #bgImage{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;display:block;z-index:0}
+  #fx{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:1}
+
+  /* ===== 紧凑天气小条（可拖动） ===== */
+  #dock{
+    position:fixed;left:16px;top:16px;z-index:20;
+    display:flex;align-items:center;gap:11px;
+    background:rgba(13,21,32,.62);
+    border:1px solid var(--panel-border);border-radius:13px;
+    padding:9px 14px;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    box-shadow:0 6px 20px rgba(0,0,0,.28);
+    user-select:none;cursor:grab;touch-action:none;max-width:250px;
+  }
+  #dock:active{cursor:grabbing}
+  #dockTemp{font-size:25px;font-weight:300;line-height:1;white-space:nowrap}
+  #dockMeta{min-width:0}
+  #dockDesc{font-size:12.5px;font-weight:600;white-space:nowrap}
+  #dockLoc{font-size:10.5px;color:var(--text-dim);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;max-width:150px}
+
+  /* ===== 遮罩 ===== */
+  #overlay{
+    position:fixed;inset:0;z-index:30;background:rgba(4,9,16,.45);
+    opacity:0;visibility:hidden;transition:opacity .2s;
+  }
+  #overlay.show{opacity:1;visibility:visible}
+
+  /* ===== 居中统一面板 ===== */
+  #modal{
+    position:fixed;z-index:31;left:50%;top:50%;
+    transform:translate(-50%,-48%) scale(.97);
+    width:386px;max-width:calc(100vw - 32px);max-height:calc(100vh - 64px);
+    display:flex;flex-direction:column;overflow:hidden;
+    background:var(--panel-bg);
+    border:1px solid var(--panel-border);border-radius:16px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 18px 60px rgba(0,0,0,.5);
+    opacity:0;visibility:hidden;transition:opacity .2s,transform .2s;
+  }
+  #modal.show{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1)}
+  #modalHead{display:flex;align-items:center;gap:8px;padding:10px 12px;
+    border-bottom:1px solid var(--panel-border);flex:none}
+  #tabs{display:flex;gap:4px;flex:1}
+  .tab{border:none;background:transparent;color:var(--text-dim);
+    font-size:13px;padding:7px 12px;border-radius:9px;cursor:pointer}
+  .tab:hover{background:var(--accent-soft);color:var(--text)}
+  .tab.active{background:var(--accent);color:#0c1a28;font-weight:600}
+  #modalClose{flex:none;width:32px;height:32px;border-radius:9px;
+    border:1px solid var(--panel-border);background:rgba(255,255,255,.08);
+    color:var(--text);font-size:17px;cursor:pointer;line-height:1}
+  #modalClose:hover{background:rgba(255,120,120,.25);border-color:rgba(255,120,120,.5)}
+  #modalBody{overflow-y:auto;padding:14px;flex:1}
+  .tab-pane{display:none;flex-direction:column;gap:12px}
+  .tab-pane.active{display:flex}
+
+  /* 面板在 modal 内为静态块 */
+  .panel{
+    position:static;background:rgba(255,255,255,.05);
+    border:1px solid var(--panel-border);border-radius:13px;
+    padding:14px 15px;
+  }
+
+  /* 左上：天气信息 */
+  .loc-row{display:flex;align-items:center;gap:8px;min-width:0}
+  .loc-row svg{flex:none}
+  #locName{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #updateTime{font-size:11.5px;color:var(--text-dim);margin-top:3px}
+  .temp-row{display:flex;align-items:flex-start;gap:10px;margin:12px 0 8px}
+  #temp{font-size:52px;font-weight:200;line-height:1;letter-spacing:-1px}
+  #temp sup{font-size:20px;top:-1.1em;vertical-align:super}
+  #desc{font-size:16px;font-weight:600;align-self:center}
+  .metrics{display:grid;grid-template-columns:1fr 1fr;gap:7px 14px;margin-top:10px}
+  .metric{font-size:12.5px;color:var(--text-dim);display:flex;justify-content:space-between;gap:8px}
+  .metric b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  /* 搜索与操作 */
+  .search-box{display:flex;gap:6px}
+  .search-box input{
+    flex:1;min-width:0;border-radius:9px;border:1px solid var(--panel-border);
+    background:rgba(255,255,255,.08);color:var(--text);
+    padding:9px 10px;font-size:13px;outline:none;
+  }
+  .search-box input::placeholder{color:var(--text-dim)}
+  .search-box input:focus{border-color:var(--accent)}
+  .icon-btn{
+    flex:none;width:36px;height:36px;border-radius:9px;border:1px solid var(--panel-border);
+    background:rgba(255,255,255,.08);color:var(--text);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .icon-btn:hover{background:var(--accent-soft);border-color:var(--accent)}
+  #searchResults{
+    list-style:none;display:none;max-height:170px;overflow:auto;
+    border:1px solid var(--panel-border);border-radius:9px;background:rgba(10,18,28,.95);
+  }
+  #searchResults li{padding:9px 11px;font-size:13px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.06)}
+  #searchResults li:last-child{border-bottom:none}
+  #searchResults li:hover{background:var(--accent-soft)}
+  .coord-row{display:flex;gap:6px;align-items:center}
+  .coord-row input{
+    width:100%;min-width:0;border-radius:9px;border:1px solid var(--panel-border);
+    background:rgba(255,255,255,.08);color:var(--text);padding:8px 9px;font-size:12.5px;outline:none;
+  }
+  .coord-row label{font-size:11.5px;color:var(--text-dim);white-space:nowrap}
+  .wind-slider,.time-slider{display:flex;flex-direction:column;gap:5px}
+  .wind-slider header,.time-slider header{display:flex;justify-content:space-between;font-size:12px;color:var(--text-dim)}
+  .wind-slider header b,.time-slider header b{color:var(--text);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);height:22px}
+  .feature-toggle{display:flex;align-items:center;justify-content:space-between;
+    border:1px solid var(--panel-border);border-radius:9px;padding:9px 12px;background:rgba(255,255,255,.05)}
+  .feature-toggle span{font-size:13px;color:var(--text)}
+  .switch{position:relative;display:inline-block;width:40px;height:22px;flex:none;cursor:pointer}
+  .switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+  .switch-track{position:absolute;inset:0;border-radius:22px;background:rgba(255,255,255,.16);
+    border:1px solid var(--panel-border);transition:background .2s,border-color .2s}
+  .switch-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:#dfe8f2;transition:transform .2s}
+  .switch input:checked + .switch-track{background:var(--accent);border-color:var(--accent)}
+  .switch input:checked + .switch-track .switch-thumb{transform:translateX(18px)}
+  #status{font-size:11.5px;color:var(--text-dim);min-height:15px}
+
+  /* 场景切换 */
+  #scenes{display:flex;flex-wrap:wrap;gap:7px}
+  .scene-btn{
+    border:1px solid var(--panel-border);background:rgba(255,255,255,.07);
+    color:var(--text);border-radius:9px;padding:8px 13px;font-size:12.5px;cursor:pointer;
+  }
+  .scene-btn:hover{background:var(--accent-soft)}
+  .scene-btn.active{background:var(--accent);border-color:var(--accent);color:#0c1a28;font-weight:600}
+
+  /* 壁纸选择器 */
+  .wp-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .wp-thumb{position:relative;border-radius:9px;overflow:hidden;cursor:pointer;
+    border:2px solid transparent;aspect-ratio:16/9;background:#0d1826}
+  .wp-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .wp-thumb:hover{border-color:var(--accent)}
+  .wp-thumb.selected{border-color:var(--accent)}
+  .wp-thumb .wp-name{position:absolute;left:0;right:0;bottom:0;font-size:10px;
+    padding:11px 5px 4px;color:#fff;
+    background:linear-gradient(transparent,rgba(5,12,22,.85))}
+
+  /* 待办面板 */
+  #todoPanel{display:flex;flex-direction:column;gap:10px}
+  #todoPanel.todo-disabled{opacity:.45;pointer-events:none}
+  .todo-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .todo-title{font-size:14.5px;font-weight:600}
+  .todo-date{font-size:11px;color:var(--text-dim);margin-top:2px}
+  .todo-add{display:flex;gap:6px}
+  .todo-add input{flex:1;min-width:0;border-radius:9px;border:1px solid var(--panel-border);
+    background:rgba(255,255,255,.08);color:var(--text);padding:9px 10px;font-size:13px;outline:none}
+  .todo-add input[type=date]{flex:none;width:116px;padding:8px 6px;font-size:11.5px;
+    color-scheme:dark;color:var(--text-dim);cursor:pointer}
+  .todo-add input::placeholder{color:var(--text-dim)}
+  .todo-add input:focus{border-color:var(--accent)}
+  .todo-carry{width:100%;text-align:left;border:1px solid rgba(111,182,232,.4);
+    background:var(--accent-soft);color:var(--text);border-radius:8px;padding:7px 10px;
+    font-size:11.5px;cursor:pointer}
+  .todo-carry:hover{background:rgba(111,182,232,.3)}
+  .todo-list{list-style:none;overflow:auto;display:flex;flex-direction:column;gap:6px;min-height:20px;flex:1}
+  .todo-item{display:flex;align-items:center;gap:9px;border:1px solid rgba(255,255,255,.07);
+    border-radius:8px;padding:9px 9px;background:rgba(255,255,255,.04);
+    cursor:pointer;transition:background .12s,border-color .12s}
+  .todo-item:hover{background:rgba(255,255,255,.075);border-color:rgba(255,255,255,.14)}
+  .todo-item:active{background:rgba(111,182,232,.16)}
+  .todo-check{flex:none;width:18px;height:18px;accent-color:var(--accent);
+    margin:0;pointer-events:none;cursor:pointer}
+  .todo-text{flex:1;min-width:0;font-size:13px;line-height:1.35;word-break:break-word}
+  .todo-item.done .todo-text{color:var(--text-dim);text-decoration:line-through}
+  .todo-del{flex:none;width:26px;height:26px;border-radius:7px;border:none;
+    background:transparent;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .todo-del:hover{color:#ff8a8a;background:rgba(255,90,90,.14)}
+  .todo-del svg{pointer-events:none}
+  .todo-empty{font-size:12.5px;color:var(--text-dim);text-align:center;padding:14px 6px;cursor:default}
+  .todo-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    border-top:1px solid var(--panel-border);padding-top:9px;flex:none}
+  #todoProgress,#historySummary{font-size:11.5px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+  .foot-btns{display:flex;gap:2px;flex:none}
+  .todo-link-btn{border:none;background:transparent;color:var(--text-dim);font-size:11.5px;
+    cursor:pointer;border-radius:6px;padding:4px 7px;white-space:nowrap}
+  .todo-link-btn:hover{color:var(--accent);background:var(--accent-soft)}
+  .todo-link-btn.danger:hover{color:#ff8a8a;background:rgba(255,90,90,.14)}
+  .todo-history{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
+  #historyList{display:flex;flex-direction:column;gap:6px}
+
+  /* 未来待办 */
+  .todo-upcoming{display:none;flex-direction:column;gap:6px;
+    border-top:1px solid var(--panel-border);padding-top:9px}
+  .todo-upcoming.show{display:flex}
+  .upc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    font-size:11.5px;color:var(--text-dim);padding:3px 2px 0}
+  .upc-head b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+  .history-date{font-size:11.5px;font-weight:600;color:var(--text-dim);
+    padding:4px 2px;border-bottom:1px solid rgba(255,255,255,.08)}
+
+  /* 待办显示方式（三档分段选择） */
+  .todo-mode-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+    border:1px solid var(--panel-border);border-radius:10px;padding:8px 10px;background:rgba(255,255,255,.05)}
+  .todo-mode-head>span{font-size:13px;white-space:nowrap}
+  .seg{display:flex;gap:2px;background:rgba(255,255,255,.05);border:1px solid var(--panel-border);
+    border-radius:8px;padding:2px}
+  .seg-btn{border:none;background:transparent;color:var(--text-dim);font-size:11.5px;
+    padding:5px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
+  .seg-btn:hover{color:var(--text);background:var(--accent-soft)}
+  .seg-btn.active{background:var(--accent);color:#0c1a28;font-weight:600}
+  .todo-float-bar{display:none;flex-direction:column;gap:7px;border:1px solid rgba(111,182,232,.35);
+    background:var(--accent-soft);border-radius:9px;padding:9px 11px;
+    font-size:11.5px;color:var(--text-dim);line-height:1.5}
+  .todo-float-bar.show{display:flex}
+  .todo-float-bar b{color:var(--text);font-weight:600}
+  .tfb-btns{display:flex;gap:14px}
+  .tfb-btns .todo-link-btn{padding:2px 0}
+  .tfb-btns .todo-link-btn:hover{background:transparent;color:var(--accent)}
+
+  /* ===== 桌面待办悬浮窗 ===== */
+  #floatTodo{
+    position:fixed;left:0;top:0;width:352px;z-index:26;
+    display:none;flex-direction:column;
+    background:var(--panel-bg);border:1px solid var(--panel-border);border-radius:14px;
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:0 16px 44px rgba(0,0,0,.42);
+    color:var(--text);
+  }
+  #floatTodo.show{display:flex}
+  #floatTodo.pinned{opacity:.92}
+  /* 固定 = 锁定位置（不可拖动），但整窗仍可点击，方便直接勾选待办 */
+  #floatTodo.pinned #ftHead{cursor:default}
+  #floatTodo.pinned .ft-grip{opacity:.45}
+  #floatTodo.pinned #ftPinBtnHead{
+    pointer-events:auto;background:var(--accent);color:#0c1a28;
+    box-shadow:0 0 0 2px rgba(111,182,232,.35);
+  }
+  #floatTodo.pinned #ftPinBtnHead:hover{background:#8ec8f0;color:#0c1a28}
+  .ft-head{display:flex;align-items:center;gap:5px;padding:8px 8px 8px 12px;flex:none;
+    border-bottom:1px solid var(--panel-border);cursor:grab;user-select:none;touch-action:none}
+  .ft-head.dragging{cursor:grabbing}
+  .ft-grip{flex:none;display:flex;align-items:center;color:var(--text-dim)}
+  .ft-title{flex:1;font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .ft-btn{flex:none;width:24px;height:24px;border-radius:7px;border:none;background:transparent;
+    color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .ft-btn:hover{background:var(--accent-soft);color:var(--text)}
+  .ft-btn.on{background:var(--accent-soft);color:var(--accent)}
+  .ft-body{display:block;flex:none;padding:12px}
+  #floatTodo .panel{background:transparent;border:none;border-radius:0;padding:0;flex:none}
+  #floatTodo .todo-list{max-height:34vh;min-height:24px}
+  .ft-badge{display:none;flex:none;font-size:10.5px;color:var(--text-dim);padding:0 12px 10px}
+  #floatTodo.pinned .ft-badge{display:block}
+
+  @media (max-width:760px){
+    #dock{left:12px;top:12px}
+    #temp{font-size:44px}
+    #modalBody{padding:12px}
+  }
+</style>
+</head>
+<body>
+<img id="bgImage" src="assets/wp-lake.jpg" alt="">
+<canvas id="fx"></canvas>
+
+<!-- 紧凑天气小条：点击打开设置，可拖动 -->
+<div id="dock" title="点击打开设置，可拖动到任意位置">
+  <div id="dockTemp">--°</div>
+  <div id="dockMeta">
+    <div id="dockDesc">—</div>
+    <div id="dockLoc">定位中…</div>
+  </div>
+</div>
+
+<div id="overlay"></div>
+
+<!-- 统一设置面板 -->
+<div id="modal" role="dialog" aria-modal="true" aria-label="天气壁纸设置">
+  <div id="modalHead">
+    <div id="tabs">
+      <button class="tab active" data-tab="weather">天气</button>
+      <button class="tab" data-tab="wallpaper">壁纸</button>
+      <button class="tab" data-tab="scene">场景</button>
+      <button class="tab" data-tab="todo">待办</button>
+    </div>
+    <button id="modalClose" aria-label="关闭设置">×</button>
+  </div>
+  <div id="modalBody">
+
+    <!-- 天气标签页 -->
+    <div class="tab-pane active" data-pane="weather">
+      <section class="panel" id="info">
+        <div class="loc-row">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#6fb6e8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <div style="min-width:0">
+            <div id="locName">定位中…</div>
+            <div id="updateTime">等待天气数据</div>
+          </div>
+        </div>
+        <div class="temp-row">
+          <div id="temp">--<sup>°C</sup></div>
+          <div id="desc">—</div>
+        </div>
+        <div class="metrics">
+          <div class="metric"><span>体感</span><b id="feelsLike">—</b></div>
+          <div class="metric"><span>湿度</span><b id="humidity">—</b></div>
+          <div class="metric"><span>风速</span><b id="windSpeed">—</b></div>
+          <div class="metric"><span>阵风</span><b id="windGust">—</b></div>
+          <div class="metric"><span>日出</span><b id="sunrise">—</b></div>
+          <div class="metric"><span>日落</span><b id="sunset">—</b></div>
+        </div>
+      </section>
+
+      <section class="panel" id="control">
+        <div class="search-box">
+          <input id="cityInput" type="text" placeholder="搜索城市，如 合肥 / 上海" autocomplete="off">
+          <button class="icon-btn" id="searchBtn" title="搜索" aria-label="搜索城市">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          </button>
+          <button class="icon-btn" id="locateBtn" title="定位当前位置（系统定位，授权已放行）" aria-label="定位当前位置">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+          </button>
+          <button class="icon-btn" id="refreshBtn" title="刷新天气" aria-label="刷新天气">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+          </button>
+        </div>
+        <ul id="searchResults"></ul>
+        <div class="coord-row">
+          <label>纬度</label><input id="latInput" type="number" step="0.01" placeholder="31.82">
+          <label>经度</label><input id="lonInput" type="number" step="0.01" placeholder="117.23">
+          <button class="icon-btn" id="coordBtn" title="应用坐标" aria-label="应用手动坐标">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+        </div>
+        <div class="wind-slider">
+          <header><span>手动风力（预览用）</span><b id="windSliderVal">自动</b></header>
+          <input id="windSlider" type="range" min="0" max="60" step="1" value="0" disabled>
+        </div>
+        <div class="time-slider">
+          <header><span>时间（可拖动太阳 / 月亮）</span><b id="timeSliderVal">自动</b></header>
+          <input id="timeSlider" type="range" min="0" max="1" step="0.001" value="0.3" disabled>
+        </div>
+        <div id="status"></div>
+      </section>
+    </div>
+
+    <!-- 壁纸标签页 -->
+    <div class="tab-pane" data-pane="wallpaper">
+      <div class="wp-grid" id="wpGrid"></div>
+    </div>
+
+    <!-- 场景标签页 -->
+    <div class="tab-pane" data-pane="scene">
+      <div id="scenes">
+        <button class="scene-btn active" data-scene="auto">自动同步</button>
+        <button class="scene-btn" data-scene="clear">晴天</button>
+        <button class="scene-btn" data-scene="cloudy">多云</button>
+        <button class="scene-btn" data-scene="fog">雾天</button>
+        <button class="scene-btn" data-scene="rain">下雨</button>
+        <button class="scene-btn" data-scene="snow">下雪</button>
+        <button class="scene-btn" data-scene="storm">雷暴</button>
+        <button class="scene-btn" data-scene="windy">大风</button>
+      </div>
+    </div>
+
+    <!-- 待办标签页 -->
+    <div class="tab-pane" data-pane="todo">
+      <div class="todo-mode-head">
+        <span>待办清单</span>
+        <div class="seg" id="todoModeSeg" role="group" aria-label="待办清单显示方式">
+          <button class="seg-btn" data-mode="off">关闭</button>
+          <button class="seg-btn active" data-mode="panel">面板内</button>
+          <button class="seg-btn" data-mode="float">桌面悬浮窗</button>
+        </div>
+      </div>
+      <div class="todo-float-bar" id="todoFloatBar">
+        <div>悬浮窗：<b id="tfbState">显示中</b> · 三击太阳可显示或隐藏</div>
+        <div class="tfb-btns">
+          <button class="todo-link-btn" id="ftToggleShow">隐藏</button>
+          <button class="todo-link-btn" id="ftPinBtn">固定位置</button>
+        </div>
+      </div>
+      <div id="todoHome">
+      <div class="panel" id="todoPanel">
+        <div class="todo-head">
+          <div style="min-width:0">
+            <div class="todo-title">今日待办</div>
+            <div class="todo-date" id="todoDate"></div>
+          </div>
+        </div>
+        <div class="todo-add">
+          <input id="todoInput" type="text" placeholder="添加待办，回车确认" autocomplete="off" maxlength="80">
+          <input id="todoDue" type="date" title="选择日期：默认今天，可给未来某天安排待办">
+          <button class="icon-btn" id="todoAddBtn" title="添加待办" aria-label="添加待办">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <button class="todo-carry" id="todoCarry" style="display:none"></button>
+        <ul class="todo-list" id="todoList"></ul>
+        <div class="todo-upcoming" id="todoUpcoming"></div>
+        <div class="todo-history" id="todoHistory" style="display:none">
+          <div id="historyList"></div>
+        </div>
+        <div class="todo-foot" id="todoFoot">
+          <span id="todoProgress">已完成 0/0</span>
+          <div class="foot-btns">
+            <button class="todo-link-btn" id="todoHistoryBtn">历史记录</button>
+            <button class="todo-link-btn" id="todoClearDone">清除已完成</button>
+          </div>
+        </div>
+        <div class="todo-foot" id="historyFoot" style="display:none">
+          <span id="historySummary">共 0 天记录</span>
+          <div class="foot-btns">
+            <button class="todo-link-btn" id="historyBackBtn">返回今天</button>
+            <button class="todo-link-btn danger" id="historyClearAll">清空历史</button>
+          </div>
+        </div>
+      </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 桌面待办悬浮窗：可拖动、可固定（固定后点击穿透）、三击太阳显示/隐藏 -->
+<div id="floatTodo" role="region" aria-label="桌面待办清单">
+  <div class="ft-head" id="ftHead">
+    <span class="ft-grip" aria-hidden="true">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="8" cy="6" r="1.6"/><circle cx="16" cy="6" r="1.6"/><circle cx="8" cy="12" r="1.6"/><circle cx="16" cy="12" r="1.6"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/></svg>
+    </span>
+    <span class="ft-title">待办清单</span>
+    <button class="ft-btn" id="ftPinBtnHead" title="固定位置（固定后点击穿透，不影响桌面图标）" aria-label="固定位置">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6"/><path d="M10 4v6l-3 4h10l-3-4V4"/><path d="M12 14v6"/></svg>
+    </button>
+    <button class="ft-btn" id="ftHideBtn" title="隐藏（三击太阳可再次唤出）" aria-label="隐藏待办悬浮窗">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg>
+    </button>
+  </div>
+  <div class="ft-body" id="ftHost">
+    <div class="panel" id="ftPanel">
+      <div class="todo-head">
+        <div style="min-width:0">
+          <div class="todo-title">今日待办</div>
+          <div class="todo-date" id="ftDate"></div>
+        </div>
+      </div>
+      <div class="todo-add">
+        <input id="ftInput" type="text" placeholder="添加待办，回车确认" autocomplete="off" maxlength="80">
+        <button class="icon-btn" id="ftAddBtn" title="添加待办" aria-label="添加待办">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+      </div>
+      <button class="todo-carry" id="ftCarry" style="display:none"></button>
+      <ul class="todo-list" id="ftList"></ul>
+      <div class="todo-upcoming" id="ftUpcoming"></div>
+      <div class="todo-foot" id="ftFoot">
+        <span id="ftProgress">已完成 0/0</span>
+        <div class="foot-btns">
+          <button class="todo-link-btn" id="ftClearDone">清除已完成</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="ft-badge" id="ftBadge">已固定 · 点击穿透，点右上角图钉可解除</div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   1. 常量与 WMO 天气代码映射
+   ============================================================ */
+const canvas = document.getElementById('fx');
+const ctx = canvas.getContext('2d');
+const bgImage = document.getElementById('bgImage');
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let W = 0, H = 0, DPR = 1, areaScale = 1;
+
+const WMO_DESC = {
+  0:'晴',1:'大致晴朗',2:'局部多云',3:'阴',
+  45:'雾',48:'雾凇',
+  51:'小毛毛雨',53:'毛毛雨',55:'大毛毛雨',56:'冻毛毛雨',57:'强冻毛毛雨',
+  61:'小雨',63:'中雨',65:'大雨',66:'冻雨',67:'强冻雨',
+  71:'小雪',73:'中雪',75:'大雪',77:'雪粒',
+  80:'小阵雨',81:'阵雨',82:'强阵雨',85:'小阵雪',86:'大阵雪',
+  95:'雷暴',96:'雷暴伴冰雹',99:'强雷暴伴冰雹'
+};
+function wmoScene(code){
+  if(code===0) return 'clear';
+  if(code<=3) return 'cloudy';
+  if(code===45||code===48) return 'fog';
+  if([51,53,55,56,57,61,63,65,66,67,80,81,82].includes(code)) return 'rain';
+  if([71,73,75,77,85,86].includes(code)) return 'snow';
+  if(code>=95) return 'storm';
+  return 'cloudy';
+}
+function rainIntensity(code){
+  if([51,53,56,61,80,57].includes(code)) return 0.45;
+  if([55,63,66,81,85].includes(code)) return 0.75;
+  return 1;
+}
+
+/* ============================================================
+   2. 壁纸配置（本地相对路径）
+   ============================================================ */
+const WALLPAPERS = [
+  {id:'lake',    name:'山间湖泊', src:'assets/wp-lake.jpg'},
+  {id:'coast',   name:'海岸灯塔', src:'assets/wp-coast.jpg'},
+  {id:'city',    name:'城市天际线', src:'assets/wp-city.jpg'},
+  {id:'forest',  name:'森林小径', src:'assets/wp-forest.jpg'},
+  {id:'country', name:'田园乡村', src:'assets/wp-country.jpg'},
+  {id:'snow',    name:'雪山云海', src:'assets/wp-snow.jpg'},
+  {id:'cgarch',  name:'CG拱桥', src:'assets/wp-cg-arch.jpg'},
+  {id:'cgrain',  name:'CG雨桥', src:'assets/wp-cg-rain.jpg'},
+  {id:'cgred',   name:'CG红索桥', src:'assets/wp-cg-red.jpg'}
+];
+const WP_STORE='weather_wallpaper_v1';
+
+/* ============================================================
+   2.1 地点：多屏独立记忆（每个显示器可用不同地点）
+   - URL 参数 ?slot=monitor2&lat=..&lon=..&name=..
+   - 或在页面前注入 window.FORCED_LOC={lat,lon,name,slot}
+   ============================================================ */
+const LOC_PARAMS=new URLSearchParams(location.search);
+const LOC_FORCED=window.FORCED_LOC||null;
+const LOC_SLOT=(LOC_FORCED&&LOC_FORCED.slot)||LOC_PARAMS.get('slot')||'default';
+const LOC_STORE='weather_loc_v1_'+LOC_SLOT;
+
+const state = {
+  mode:'auto', manualScene:'clear', scene:'clear', intensity:0.7,
+  manualPhase:0.3,
+  wallpaper:'lake',
+  loc:{lat:24.874228, lon:102.860748, name:'昆明市'},
+  weather:null, sunrise:null, sunset:null,
+  wind:{speed:0, gust:0, dir:0, effective:0, norm:0, vecX:1, vecY:0},
+  flash:0, nextLightning:3000, bolt:null,
+  body:{type:'sun',x:0,y:0}, lastFetch:0
+};
+let statusHold=0;
+
+function rand(a,b){return a+Math.random()*(b-a)}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+function lerp(a,b,t){return a+(b-a)*t}
+function lerpC(a,b,t){return [lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)]}
+function rgba(c,a){return `rgba(${c.map(v=>Math.round(v)).join(',')},${a})`}
+
+/* ============================================================
+   3. 画布尺寸与星空生成
+   ============================================================ */
+const stars=[];
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W*DPR); canvas.height = Math.round(H*DPR);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  areaScale = Math.max(0.55, Math.min(2.2, (W*H)/(1920*1080)));
+
+  stars.length=0;
+  for(let i=0;i<Math.round(150*areaScale);i++)
+    stars.push({x:rand(0,W),y:rand(0,H*0.62),r:rand(0.5,1.6),ph:rand(0,Math.PI*2)});
+}
+window.addEventListener('resize', resize);
+
+/* ============================================================
+   4. 日相计算（太阳/月亮按真实日出日落弧线）
+   ============================================================ */
+function defaultClock(hour){
+  const d = new Date();
+  d.setHours(hour,0,0,0);
+  return d.getTime();
+}
+function getAutoPhase(nowMs){
+  const sr = state.sunrise||defaultClock(6);
+  const ss = state.sunset||defaultClock(18);
+  const dayLen = Math.max(3600e3, ss-sr);
+  if(nowMs>=sr && nowMs<=ss)
+    return clamp(0.5*(nowMs-sr)/dayLen, 0, 0.5);
+  if(nowMs<sr){
+    const prevSs = ss-86400e3;
+    const nLen = Math.max(3600e3, sr-prevSs);
+    return 0.5+0.5*clamp((nowMs-prevSs)/nLen,0,1);
+  }
+  const nextSr = sr+86400e3;
+  const nLen = Math.max(3600e3, nextSr-ss);
+  return 0.5+0.5*clamp((nowMs-ss)/nLen,0,1);
+}
+function bodyFromPhase(ph){
+  const isDay = ph<0.5;
+  const a = isDay ? ph/0.5 : (ph-0.5)/0.5;
+  return {type:isDay?'sun':'moon', a,
+    x:lerp(W*0.1,W*0.9,a),
+    y:H*0.66-Math.sin(a*Math.PI)*H*0.52};
+}
+/* ============================================================
+   5. 连续亮度引擎：太阳高度角 + 云量（作用于图片底图）
+   ============================================================ */
+const WX_TONE = {
+  clear: {c:[0,0,0],      a:0,    cloud:0.12},
+  windy: {c:[60,72,84],   a:0.12, cloud:0.3},
+  cloudy:{c:[92,102,114], a:0.3,  cloud:0.55},
+  fog:   {c:[200,208,216],a:0.46, cloud:0.35},
+  rain:  {c:[48,60,74],   a:0.34, cloud:0.5},
+  storm: {c:[14,20,30],   a:0.52, cloud:0.62},
+  snow:  {c:[208,220,233],a:0.16, cloud:0.45}
+};
+
+const fxState = {ph:0, isNight:false};
+const toneSmooth = {
+  dark:{c:[10,18,38],a:0},
+  warm:{c:[255,140,72],a:0},
+  cloudDark:0,
+  wx:{c:[0,0,0],a:0},
+  star:0, cloud:0
+};
+function computeDayTone(ph){
+  const isDay = ph<0.5;
+  const a = isDay ? ph/0.5 : (ph-0.5)/0.5;
+  const sunElev = isDay ? Math.sin(a*Math.PI) : 0;
+  const daylight = sunElev;
+  const dark = 0.62*(1-daylight);
+  const warmAmt = isDay ? clamp(1-sunElev/0.4,0,1) : 0;
+  let cc=0;
+  if(state.mode==='auto'&&state.weather&&typeof state.weather.cloud_cover==='number')
+    cc=clamp(state.weather.cloud_cover/100,0,1);
+  const cloudDark=0.3*cc*(0.35+0.65*daylight);
+  const star = isDay ? clamp(1-daylight*1.25)*0.55
+                     : 0.72+0.28*Math.sin(a*Math.PI);
+  return {dark:{c:[10,18,38],a:dark},
+          warm:{c:[255,140,72],a:0.3*warmAmt},
+          cloudDark, star, isNight:!isDay};
+}
+function computeTone(ph){
+  const d=computeDayTone(ph);
+  const wx=WX_TONE[state.scene]||WX_TONE.clear;
+  return {day:d, wx:{c:wx.c,a:wx.a}, cloud:wx.cloud};
+}
+function smoothTone(tg,dt){
+  const k=Math.min(1,dt*2.4), d=tg.day;
+  toneSmooth.dark.a=lerp(toneSmooth.dark.a,d.dark.a,k);
+  toneSmooth.warm.a=lerp(toneSmooth.warm.a,d.warm.a,k);
+  toneSmooth.cloudDark=lerp(toneSmooth.cloudDark,d.cloudDark,k);
+  toneSmooth.wx.c=lerpC(toneSmooth.wx.c,tg.wx.c,k);
+  toneSmooth.wx.a=lerp(toneSmooth.wx.a,tg.wx.a,k);
+  toneSmooth.star=lerp(toneSmooth.star,d.star,k);
+  toneSmooth.cloud=lerp(toneSmooth.cloud,tg.cloud,k);
+}
+
+/* ============================================================
+   6. 叠加层绘制（色调 / 星空 / 天体 / 云）
+   ============================================================ */
+function drawTone(){
+  if(toneSmooth.warm.a>0.003){
+    ctx.fillStyle=rgba(toneSmooth.warm.c,toneSmooth.warm.a);
+    ctx.fillRect(0,0,W,H);
+  }
+  if(toneSmooth.wx.a>0.003){
+    ctx.fillStyle=rgba(toneSmooth.wx.c,toneSmooth.wx.a);
+    ctx.fillRect(0,0,W,H);
+  }
+  if(toneSmooth.cloudDark>0.003){
+    ctx.fillStyle=`rgba(20,28,42,${toneSmooth.cloudDark})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  if(toneSmooth.dark.a>0.003){
+    ctx.fillStyle=rgba(toneSmooth.dark.c,toneSmooth.dark.a);
+    ctx.fillRect(0,0,W,H);
+  }
+}
+function drawStars(t){
+  if(toneSmooth.star<=0.02) return;
+  for(const s of stars){
+    const tw=0.5+0.5*Math.sin(t*1.6+s.ph);
+    ctx.fillStyle=`rgba(222,234,255,${toneSmooth.star*(0.35+0.55*tw)})`;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
+  }
+}
+function drawBody(){
+  const b=state.body; if(!b) return;
+  const r=b.type==='sun'?26:23;
+  const glowCol=b.type==='sun'?[255,224,150]:[214,228,255];
+  const glow=ctx.createRadialGradient(b.x,b.y,6,b.x,b.y,r*3.4);
+  glow.addColorStop(0,rgba(glowCol,0.85));
+  glow.addColorStop(1,rgba(glowCol,0));
+  ctx.fillStyle=glow;
+  ctx.beginPath();ctx.arc(b.x,b.y,r*3.4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=b.type==='sun'?'#ffd98a':'#e9edf6';
+  ctx.beginPath();ctx.arc(b.x,b.y,r,0,Math.PI*2);ctx.fill();
+  if(b.type==='moon'){
+    ctx.fillStyle='rgba(120,134,160,.55)';
+    ctx.beginPath();ctx.arc(b.x-8,b.y-4,4.5,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(b.x+7,b.y+6,3.2,0,Math.PI*2);ctx.fill();
+  }
+}
+function drawClouds(dt){
+  const baseA=toneSmooth.cloud;
+  if(baseA<=0.02) return;
+  const drift=(8+52*state.wind.norm)*dt;
+  for(const c of clouds){
+    if(!reduceMotion){
+      c.x+=drift*c.speed*state.wind.vecX;
+      if(c.x>W+160)c.x=-160;
+      if(c.x<-160)c.x=W+160;
+    }
+    ctx.save();ctx.translate(c.x,c.y);ctx.scale(c.scale,c.scale);
+    const puffs=[[0,0,1.15],[-34,8,0.85],[34,8,0.9],[-14,-16,0.8],[18,-14,0.75]];
+    for(let i=0;i<c.puffs;i++){
+      const p=puffs[i];
+      const rg=ctx.createRadialGradient(p[0],p[1],4,p[0],p[1],34*p[2]);
+      rg.addColorStop(0,`rgba(226,234,244,${baseA*0.75})`);
+      rg.addColorStop(1,'rgba(226,234,244,0)');
+      ctx.fillStyle=rg;
+      ctx.beginPath();ctx.arc(p[0],p[1],34*p[2],0,Math.PI*2);ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   7. 粒子系统（雨 / 雪 / 风线 / 云 / 雾 / 落叶）
+   ============================================================ */
+const rain=[], snow=[], streaks=[], clouds=[], fogBands=[], leaves=[];
+
+function makeRain(severe){
+  return {x:rand(-W*0.2,W*1.1), y:rand(-H,H), len:rand(12,26)*(severe?1.3:1),
+          vy:rand(850,1250), w:rand(1.1,2)};
+}
+function makeSnow(){
+  return {x:rand(-50,W+50),y:rand(-H,H),r:rand(1.6,4.2),vy:rand(45,110),
+          phase:rand(0,Math.PI*2),sway:rand(18,46),a:rand(0.55,0.95)};
+}
+function makeStreak(){
+  const sp=rand(380,780);
+  return {x:rand(-W,W*1.4),y:rand(H*0.08,H*0.85),len:rand(34,90),
+          vx:sp,vy:sp*0.16,a:rand(0.12,0.34)};
+}
+function makeCloud(){
+  return {x:rand(-W*0.3,W*1.2),y:rand(H*0.06,H*0.4),scale:rand(0.7,1.5),
+          speed:rand(0.7,1),puffs:3+Math.floor(rand(0,3))};
+}
+function makeFog(){
+  return {y:rand(H*0.15,H*0.95),w:rand(W*0.5,W*1.2),x:rand(-W,W),
+          vx:rand(14,38),a:rand(0.05,0.13)};
+}
+function makeLeaf(){
+  return {x:rand(-W*0.3,W*1.2),y:rand(-H*0.2,H*0.8),vx:rand(260,520),
+          vy:rand(30,110),rot:rand(0,Math.PI*2),vr:rand(-6,6),
+          size:rand(5,9),hue:rand(20,42)};
+}
+function targetCounts(){
+  const s=state.scene, it=state.intensity;
+  const t={rain:0,snow:0,streak:0,cloud:0,fog:0,leaf:0};
+  if(s==='rain'){t.rain=Math.round(260*it*areaScale);t.cloud=5}
+  if(s==='storm'){t.rain=Math.round(380*areaScale);t.cloud=7}
+  if(s==='snow'){t.snow=Math.round(220*areaScale);t.cloud=5}
+  if(s==='cloudy')t.cloud=8;
+  if(s==='fog'){t.fog=7;t.cloud=3}
+  if(s==='clear')t.cloud=2;
+  if(s==='windy'){t.cloud=4;t.leaf=Math.round(26*areaScale)}
+  if(state.wind.norm>0.55&&s!=='windy')t.leaf=Math.round(14*areaScale);
+  if(state.wind.norm>0.18)t.streak=Math.round(70*state.wind.norm*areaScale);
+  return t;
+}
+function adjustPop(arr,target,factory){
+  while(arr.length<target)arr.push(factory());
+  if(arr.length>target)arr.length=target;
+}
+
+/* ============================================================
+   8. 风（含阵风脉冲）
+   ============================================================ */
+function updateWind(t){
+  const w=state.wind;
+  let speed=w.speed, gust=w.gust;
+  if(state.mode!=='auto'){
+    const v=parseFloat(document.getElementById('windSlider').value)||0;
+    speed=v;gust=v;
+  }
+  if(state.manualScene==='windy'&&state.mode!=='auto'&&speed===0)speed=gust=38;
+  const pulse=0.5+0.5*Math.sin(t*0.9)*Math.sin(t*0.37+1.3);
+  w.effective=lerp(speed,Math.max(gust,speed),pulse*0.85);
+  w.norm=clamp(w.effective/45,0,1);
+  const md=(w.dir+180)*Math.PI/180;
+  w.vecX=Math.cos(md);w.vecY=Math.sin(md);
+}
+
+/* ============================================================
+   9. 场景切换
+   ============================================================ */
+function applyScene(){
+  state.scene = state.mode==='auto'
+    ? (state.weather?wmoScene(state.weather.weather_code):'clear')
+    : state.manualScene;
+  state.intensity = state.mode==='auto'&&state.weather
+    ? rainIntensity(state.weather.weather_code)
+    : (state.manualScene==='storm'?1:0.7);
+  document.querySelectorAll('.scene-btn').forEach(b=>{
+    const key=b.dataset.scene;
+    b.classList.toggle('active',key===(state.mode==='auto'?'auto':state.manualScene));
+  });
+}
+
+/* ============================================================
+   10. 粒子绘制
+   ============================================================ */
+function drawParticles(dt,t,now){
+  const tc=targetCounts();
+  adjustPop(rain,tc.rain,()=>makeRain(state.scene==='storm'));
+  adjustPop(snow,tc.snow,makeSnow);
+  adjustPop(streaks,tc.streak,makeStreak);
+  adjustPop(clouds,tc.cloud,makeCloud);
+  adjustPop(fogBands,tc.fog,makeFog);
+  adjustPop(leaves,tc.leaf,makeLeaf);
+  const w=state.wind;
+
+  for(const f of fogBands){
+    if(!reduceMotion){
+      f.x+=f.vx*dt*w.vecX;
+      if(f.x>W)f.x=-f.w;
+      if(f.x<-f.w)f.x=W;
+    }
+    ctx.fillStyle=`rgba(225,232,238,${f.a})`;
+    ctx.beginPath();ctx.ellipse(f.x,f.y,f.w/2,H*0.05,0,0,Math.PI*2);ctx.fill();
+  }
+
+  if(rain.length){
+    const night=fxState.isNight;
+    ctx.strokeStyle=night?'rgba(170,200,232,.55)':'rgba(190,218,242,.72)';
+    ctx.lineCap='round';
+    for(const r of rain){
+      if(!reduceMotion){
+        r.y+=r.vy*dt;
+        r.x+=(w.vecX*w.norm*r.vy*0.72)*dt;
+        if(r.y>H+30){r.y=-30;r.x=rand(-W*0.3,W*1.1)}
+        if(r.x>W+40)r.x=-40;
+        if(r.x<-40)r.x=W+40;
+      }
+      const dx=w.vecX*w.norm*r.len*0.7;
+      ctx.lineWidth=r.w;
+      ctx.beginPath();ctx.moveTo(r.x,r.y);ctx.lineTo(r.x+dx,r.y-r.len);ctx.stroke();
+    }
+  }
+
+  for(const s of snow){
+    if(!reduceMotion){
+      s.y+=s.vy*dt;
+      s.x+=(w.vecX*w.norm*120+Math.sin(t*1.2+s.phase)*s.sway)*dt;
+      if(s.y>H+10){s.y=-10;s.x=rand(-50,W+50)}
+      if(s.x>W+30)s.x=-20;
+      if(s.x<-30)s.x=W+20;
+    }
+    ctx.fillStyle=`rgba(245,249,253,${s.a})`;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
+  }
+
+  for(const s of streaks){
+    if(!reduceMotion){
+      const sp=s.vx*(0.5+w.norm);
+      s.x+=sp*w.vecX*dt;s.y+=s.vy*w.vecY*dt;
+      if(s.x>W+120)s.x=-120;
+      if(s.x<-120)s.x=W+120;
+    }
+    ctx.strokeStyle=`rgba(225,240,252,${s.a*(0.4+w.norm)})`;
+    ctx.lineWidth=1.4;
+    ctx.beginPath();ctx.moveTo(s.x,s.y);
+    ctx.lineTo(s.x-s.len*w.vecX,s.y-s.len*0.14*w.vecY);ctx.stroke();
+  }
+
+  for(const lf of leaves){
+    if(!reduceMotion){
+      lf.x+=lf.vx*w.vecX*dt;lf.y+=lf.vy*dt;lf.rot+=lf.vr*dt;
+      if(lf.x>W+40){lf.x=-30;lf.y=rand(-H*0.2,H*0.7)}
+    }
+    ctx.save();ctx.translate(lf.x,lf.y);ctx.rotate(lf.rot);
+    ctx.fillStyle=`hsl(${lf.hue} 55% 48% / .9)`;
+    ctx.beginPath();ctx.ellipse(0,0,lf.size,lf.size*0.45,0,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
+
+  if(state.scene==='storm'){
+    if(!reduceMotion&&now>state.nextLightning){
+      state.flash=1;
+      state.bolt={x:rand(W*0.2,W*0.8),y:rand(0,H*0.12)};
+      state.nextLightning=now+rand(2200,7500);
+    }
+    if(state.flash>0.01){
+      ctx.strokeStyle='rgba(225,238,255,.95)';
+      ctx.lineWidth=2.4;ctx.lineJoin='round';
+      ctx.beginPath();
+      let {x,y}=state.bolt;ctx.moveTo(x,y);
+      while(y<H*0.55){x+=rand(-26,26);y+=rand(16,34);ctx.lineTo(x,y)}
+      ctx.stroke();
+      ctx.fillStyle=`rgba(230,240,255,${state.flash*0.38})`;
+      ctx.fillRect(0,0,W,H);
+      state.flash*=0.82;
+      if(state.flash<=0.01)state.bolt=null;
+    }
+  }
+}
+
+/* ============================================================
+   11. 主循环
+   ============================================================ */
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(0.05,(now-last)/1000); last=now;
+  const t=now/1000;
+
+  updateWind(t);
+  const ph = state.mode==='auto' ? getAutoPhase(Date.now()) : state.manualPhase;
+  state.body=bodyFromPhase(ph);
+  fxState.ph=ph;
+  fxState.isNight=ph>=0.5;
+  applyScene();
+  smoothTone(computeTone(ph),dt);
+
+  ctx.clearRect(0,0,W,H);
+  drawTone();
+  drawStars(t);
+  drawBody();
+  drawClouds(dt);
+  drawParticles(dt,t,now);
+
+  syncTimeControl(ph);
+  requestAnimationFrame(frame);
+}
+
+/* ============================================================
+   12. 天气数据（含日出日落）
+   ============================================================ */
+async function fetchWeather(){
+  const {lat,lon}=state.loc;
+  if(Date.now()>statusHold)setStatus('正在获取天气…');
+  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+    +`&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,cloud_cover,`
+    +`weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m`
+    +`&daily=sunrise,sunset&wind_speed_unit=kmh&timezone=auto`;
+  try{
+    const res=await fetch(url);
+    if(!res.ok)throw new Error('HTTP '+res.status);
+    const json=await res.json();
+    state.weather=json.current;
+    const c=state.weather;
+    state.wind.speed=c.wind_speed_10m;
+    state.wind.gust=c.wind_gusts_10m;
+    state.wind.dir=c.wind_direction_10m;
+    if(json.daily&&json.daily.sunrise){
+      state.sunrise=new Date(json.daily.sunrise[0]).getTime();
+      state.sunset=new Date(json.daily.sunset[0]).getTime();
+    }
+    state.lastFetch=Date.now();
+    renderInfo();applyScene();
+    if(Date.now()>statusHold)setStatus('天气已更新');
+  }catch(err){
+    setStatus('天气获取失败：'+err.message+'（将使用默认场景）');
+  }
+}
+function hm(ms){
+  const d=new Date(ms);
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
+function renderInfo(){
+  const c=state.weather;if(!c)return;
+  document.getElementById('locName').textContent=state.loc.name;
+  document.getElementById('temp').innerHTML=Math.round(c.temperature_2m)+'<sup>°C</sup>';
+  document.getElementById('desc').textContent=WMO_DESC[c.weather_code]||'未知';
+  document.getElementById('feelsLike').textContent=Math.round(c.apparent_temperature)+'°';
+  document.getElementById('humidity').textContent=c.relative_humidity_2m+'%';
+  document.getElementById('windSpeed').textContent=c.wind_speed_10m.toFixed(1)+' km/h';
+  document.getElementById('windGust').textContent=c.wind_gusts_10m.toFixed(1)+' km/h';
+  document.getElementById('sunrise').textContent=state.sunrise?hm(state.sunrise):'—';
+  document.getElementById('sunset').textContent=state.sunset?hm(state.sunset):'—';
+  const d=new Date();
+  document.getElementById('updateTime').textContent=
+    `更新于 ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  // 同步紧凑小条
+  document.getElementById('dockTemp').innerHTML=Math.round(c.temperature_2m)+'°';
+  document.getElementById('dockDesc').textContent=WMO_DESC[c.weather_code]||'—';
+  document.getElementById('dockLoc').textContent=state.loc.name;
+}
+function setStatus(m,holdMs){
+  document.getElementById('status').textContent=m;
+  if(holdMs)statusHold=Date.now()+holdMs;
+}
+
+/* ============================================================
+   13. 城市搜索 / 定位 / 手动坐标
+   ============================================================ */
+const resultsEl=document.getElementById('searchResults');
+async function searchCity(){
+  const q=document.getElementById('cityInput').value.trim();
+  if(!q)return;
+  setStatus('正在搜索城市…');
+  const terms=[q];
+  if(!/[市县省区州盟]$/.test(q)) terms.push(q+'市');
+  try{
+    const responses=await Promise.all(terms.map(t=>
+      fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(t)}&count=8&language=zh&format=json`)
+        .then(r=>r.json()).catch(()=>({}))
+    ));
+    const seen=new Set(); let merged=[];
+    for(const j of responses){
+      for(const r of (j.results||[])){
+        const key=r.latitude.toFixed(2)+','+r.longitude.toFixed(2);
+        if(seen.has(key))continue;
+        seen.add(key);
+        merged.push(r);
+      }
+    }
+    resultsEl.innerHTML='';
+    if(!merged.length){
+      resultsEl.style.display='block';
+      resultsEl.innerHTML='<li style="cursor:default">未找到匹配城市，可尝试完整名称如“阜阳市”</li>';
+      return;
+    }
+    merged.sort((a,b)=>{
+      const aw=a.name.endsWith('市')?1:0, bw=b.name.endsWith('市')?1:0;
+      if(bw!==aw)return bw-aw;
+      return a.name.length-b.name.length;
+    });
+    for(const r of merged){
+      const li=document.createElement('li');
+      const region=[r.admin1,r.country].filter(Boolean).join(' · ');
+      li.textContent=r.name+(region?' — '+region:'');
+      li.addEventListener('click',()=>{
+        setLocation(r.latitude,r.longitude,r.name);
+        resultsEl.style.display='none';
+      });
+      resultsEl.appendChild(li);
+    }
+    resultsEl.style.display='block';
+    setStatus('请选择城市，注意核对省份');
+  }catch(err){setStatus('城市搜索失败：'+err.message)}
+}
+function setLocation(lat,lon,name){
+  state.loc={lat,lon,name};
+  try{localStorage.setItem(LOC_STORE,JSON.stringify({lat,lon,name}))}catch(_){}
+  document.getElementById('latInput').value=lat.toFixed(2);
+  document.getElementById('lonInput').value=lon.toFixed(2);
+  fetchWeather();
+}
+/* 启动时恢复地点：本槽位记忆 > 注入的固定地点 > URL 参数 > 上次成功定位 > 默认（昆明） */
+function fixLocName(loc){
+  if(!loc||typeof loc.lat!=='number')return null;
+  let name=loc.name;
+  if(!name||looksLikeCoord(name)){
+    const g=lastGoodLoc();
+    if(g&&g.name&&!looksLikeCoord(g.name)&&distKm(loc.lat,loc.lon,g.lat,g.lon)<30)name=g.name;
+    else name=nearestCity(loc.lat,loc.lon)||name;
+  }
+  return {lat:loc.lat,lon:loc.lon,name:name||'当前位置'};
+}
+function initLocation(){
+  let saved=null;
+  try{saved=JSON.parse(localStorage.getItem(LOC_STORE))}catch(_){}
+  let loc=null;
+  if(saved&&typeof saved.lat==='number')loc=saved;
+  else if(LOC_FORCED&&typeof LOC_FORCED.lat==='number')
+    loc={lat:LOC_FORCED.lat,lon:LOC_FORCED.lon,name:LOC_FORCED.name||''};
+  else{
+    const qlat=parseFloat(LOC_PARAMS.get('lat')),qlon=parseFloat(LOC_PARAMS.get('lon'));
+    if(!isNaN(qlat)&&!isNaN(qlon))loc={lat:qlat,lon:qlon,name:LOC_PARAMS.get('name')||''};
+  }
+  if(!loc)loc=lastGoodLoc();
+  if(!loc)return;
+  state.loc=fixLocName(loc);
+  const li=document.getElementById('latInput'),lo=document.getElementById('lonInput');
+  if(li)li.value=state.loc.lat.toFixed(2);
+  if(lo)lo.value=state.loc.lon.toFixed(2);
+  try{localStorage.setItem(LOC_STORE,JSON.stringify(state.loc))}catch(_){}
+}
+document.getElementById('searchBtn').addEventListener('click',searchCity);
+document.getElementById('cityInput').addEventListener('keydown',e=>{if(e.key==='Enter')searchCity()});
+document.addEventListener('click',e=>{if(!e.target.closest('#control'))resultsEl.style.display='none'});
+
+/* 定位：优先系统定位（站点权限已放行，不再弹点不动的授权框），失败再走网络定位兜底 */
+function geoOnce(ms){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){resolve({err:'unsupported'});return;}
+    let settled=false;
+    const timer=setTimeout(()=>{if(!settled){settled=true;resolve({err:'timeout'})}},ms);
+    navigator.geolocation.getCurrentPosition(
+      p=>{if(!settled){settled=true;clearTimeout(timer);resolve({coords:p.coords})}},
+      e=>{if(!settled){settled=true;clearTimeout(timer);resolve({err:e.code,msg:e.message})}},
+      {enableHighAccuracy:false,maximumAge:60000,timeout:ms}
+    );
+  });
+}
+function looksLikeCoord(s){return !!s&&/^[-+]?\d{1,3}(\.\d+)?\s*,\s*[-+]?\d{1,3}(\.\d+)?$/.test(String(s).trim())}
+function distKm(lat1,lon1,lat2,lon2){
+  const R=6371,rad=Math.PI/180;
+  const dLat=(lat2-lat1)*rad,dLon=(lon2-lon1)*rad;
+  const a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return 2*R*Math.asin(Math.min(1,Math.sqrt(a)));
+}
+/* 离线城市表：反查接口都不通时按最近城市命名，绝不再拿坐标当城市名 */
+const CITY_NEAR=[
+  ['昆明市',24.874,102.861],['玉溪市',24.352,102.547],['曲靖市',25.490,103.796],['楚雄市',25.033,101.546],
+  ['大理市',25.606,100.267],['丽江市',26.872,100.229],['昭通市',27.338,103.717],['蒙自市',23.364,103.385],
+  ['文山市',23.369,104.244],['攀枝花市',26.582,101.719],['贵阳市',26.647,106.630],['安顺市',26.253,105.948],
+  ['六盘水市',26.592,104.830],['遵义市',27.725,106.927],['成都市',30.657,104.066],['重庆市',29.563,106.551],
+  ['绵阳市',31.467,104.679],['宜宾市',28.751,104.643],['南宁市',22.817,108.366],['桂林市',25.274,110.290],
+  ['广州市',23.129,113.264],['深圳市',22.543,114.058],['珠海市',22.271,113.577],['佛山市',23.022,113.122],
+  ['东莞市',23.021,113.752],['海口市',20.044,110.199],['三亚市',18.253,109.512],['长沙市',28.228,112.939],
+  ['武汉市',30.593,114.305],['南昌市',28.682,115.858],['福州市',26.075,119.297],['厦门市',24.480,118.089],
+  ['杭州市',30.274,120.155],['宁波市',29.868,121.544],['温州市',27.994,120.699],['上海市',31.230,121.474],
+  ['苏州市',31.299,120.585],['南京市',32.060,118.796],['合肥市',31.820,117.227],['济南市',36.651,117.120],
+  ['青岛市',36.067,120.383],['郑州市',34.746,113.625],['西安市',34.342,108.940],['太原市',37.870,112.549],
+  ['石家庄市',38.042,114.515],['北京市',39.904,116.407],['天津市',39.085,117.201],['沈阳市',41.805,123.431],
+  ['大连市',38.914,121.615],['长春市',43.817,125.324],['哈尔滨市',45.803,126.535],['呼和浩特市',40.842,111.750],
+  ['银川市',38.487,106.231],['兰州市',36.061,103.834],['西宁市',36.617,101.778],['乌鲁木齐市',43.826,87.617],
+  ['拉萨市',29.652,91.172],['香港',22.319,114.169],['澳门',22.199,113.545],['台北市',25.033,121.565]
+];
+function nearestCity(lat,lon){
+  let best=null,bestD=1e9;
+  for(const c of CITY_NEAR){
+    const d=distKm(lat,lon,c[1],c[2]);
+    if(d<bestD){bestD=d;best=c[0]}
+  }
+  return bestD<=150?best:null;
+}
+async function fetchJsonT(url,ms){
+  const ctl=('AbortController' in window)?new AbortController():null;
+  const timer=setTimeout(()=>{try{if(ctl)ctl.abort()}catch(_){}},ms);
+  try{
+    const r=await fetch(url,ctl?{signal:ctl.signal}:{});
+    if(!r.ok)throw new Error('http '+r.status);
+    return await r.json();
+  }finally{clearTimeout(timer)}
+}
+async function reverseName(lat,lon){
+  try{
+    const j=await fetchJsonT(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=zh`,7000);
+    const n=[j.city,j.locality,j.principalSubdivision].find(x=>x&&!looksLikeCoord(x));
+    if(n)return n;
+  }catch(_){}
+  try{
+    const j=await fetchJsonT(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=zh-CN`,7000);
+    const a=(j&&j.address)||{};
+    const n=[a.city,a.town,a.county,a.state_district,a.state].find(x=>x&&!looksLikeCoord(x));
+    if(n)return n;
+  }catch(_){}
+  return nearestCity(lat,lon);
+}
+const LAST_GOOD='weather_last_good_v1';
+function lastGoodLoc(){
+  try{const j=JSON.parse(localStorage.getItem(LAST_GOOD));if(j&&typeof j.lat==='number')return j}catch(_){}
+  return null;
+}
+function useLastGood(reason){
+  const g=lastGoodLoc();
+  if(!g)return false;
+  setStatus(reason+'，沿用上次定位：'+g.name,8000);
+  const lat=g.lat,lon=g.lon,name=g.name;
+  state.loc={lat,lon,name};
+  try{localStorage.setItem(LOC_STORE,JSON.stringify({lat,lon,name}))}catch(_){}
+  document.getElementById('latInput').value=lat.toFixed(2);
+  document.getElementById('lonInput').value=lon.toFixed(2);
+  fetchWeather();
+  return true;
+}
+async function locateMe(){
+  if(locateMe.busy)return;
+  locateMe.busy=true;
+  const btn=document.getElementById('locateBtn');
+  if(btn)btn.classList.add('busy');
+  const g=lastGoodLoc();
+  try{
+    // 先让“上次确认的城市”立即生效：系统定位再慢也不会卡在旧城市
+    if(g&&g.name&&!looksLikeCoord(g.name)){
+      setStatus('已切换到上次定位：'+g.name+'（正在校准…）',9000);
+      setLocation(g.lat,g.lon,g.name);
+    }else{
+      setStatus('正在获取当前位置…',9000);
+    }
+    const attempts=g?1:2;
+    let coords=null;
+    for(let i=0;i<attempts;i++){
+      const res=await geoOnce(i===0?8000:9000);
+      if(res&&res.coords){coords=res.coords;break}
+      if(res&&res.err===1)break;
+      if(i<attempts-1)await new Promise(r=>setTimeout(r,600));
+    }
+    if(coords){
+      const lat=coords.latitude,lon=coords.longitude;
+      const near=distKm(lat,lon,state.loc.lat,state.loc.lon)<25;
+      let name=(near&&state.loc.name&&!looksLikeCoord(state.loc.name))?state.loc.name:null;
+      if(!name)name=(await reverseName(lat,lon))||nearestCity(lat,lon)||state.loc.name||'当前位置';
+      try{localStorage.setItem(LAST_GOOD,JSON.stringify({lat,lon,name}))}catch(_){}
+      setStatus('已定位：'+name,8000);
+      setLocation(lat,lon,name);
+      return;
+    }
+    if(g&&g.name&&!looksLikeCoord(g.name)){
+      setStatus('已定位：'+g.name+'（系统定位未响应，使用上次位置）',8000);
+      return;
+    }
+    ipLocate();
+  }finally{
+    locateMe.busy=false;
+    if(btn)btn.classList.remove('busy');
+  }
+}
+document.getElementById('locateBtn').addEventListener('click',locateMe);
+
+/* 网络定位兜底（不依赖浏览器授权） */
+async function ipLocate(){
+  setStatus('正在按网络定位…（无需浏览器授权）');
+  const providers=[
+    async()=>{
+      const r=await fetch('https://ipwho.is/');
+      const j=await r.json();
+      if(!j||j.success===false||typeof j.latitude!=='number')throw new Error('no ipwho');
+      return {lat:j.latitude,lon:j.longitude,city:j.city,region:j.region,cc:j.country_code,country:j.country};
+    },
+    async()=>{
+      const r=await fetch('https://ipapi.co/json/');
+      const j=await r.json();
+      if(!j||j.error||typeof j.latitude!=='number')throw new Error('no ipapi');
+      return {lat:j.latitude,lon:j.longitude,city:j.city,region:j.region,cc:j.country_code,country:j.country_name};
+    }
+  ];
+  let got=null;
+  for(const fn of providers){try{got=await fn();break}catch(_){}}
+  if(!got){setStatus('网络定位失败，请搜索城市或手动填坐标');return;}
+  // VPN/代理会把出口 IP 落到境外：此时网络定位不可信，只沿用上次确认的位置，绝不改错城市
+  const tz=(()=>{try{return Intl.DateTimeFormat().resolvedOptions().timeZone||''}catch(_){return ''}})();
+  const tzCN=/^Asia\/(Shanghai|Chongqing|Urumqi|Harbin|Kashgar)$/.test(tz);
+  if(tzCN&&got.cc&&got.cc!=='CN'){
+    if(useLastGood('网络出口在'+(got.country||got.cc)+'，已忽略网络定位'))return;
+    setStatus('网络出口在'+(got.country||got.cc)+'，无法自动定位；已保持当前城市 '+state.loc.name+'，可点定位重试或搜索城市');
+    return;
+  }
+  const name=(await reverseName(got.lat,got.lon))||got.city||got.region||nearestCity(got.lat,got.lon)||state.loc.name;
+  setStatus('网络定位：'+name);
+  setLocation(got.lat,got.lon,name);
+}
+
+document.getElementById('coordBtn').addEventListener('click',async()=>{
+  const lat=parseFloat(document.getElementById('latInput').value);
+  const lon=parseFloat(document.getElementById('lonInput').value);
+  if(isNaN(lat)||isNaN(lon)){setStatus('请输入有效的纬度和经度');return}
+  const cur=state.loc;
+  let name=null;
+  if(cur&&cur.name&&!looksLikeCoord(cur.name)&&distKm(lat,lon,cur.lat,cur.lon)<30)name=cur.name;
+  if(!name)name=(await reverseName(lat,lon))||nearestCity(lat,lon)||cur.name||'当前位置';
+  setStatus('已应用坐标：'+name);
+  setLocation(lat,lon,name);
+});
+document.getElementById('refreshBtn').addEventListener('click',fetchWeather);
+
+/* ============================================================
+   14. 场景按钮与风力滑块
+   ============================================================ */
+document.querySelectorAll('.scene-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const key=btn.dataset.scene;
+    if(key==='auto'){
+      state.mode='auto';
+      document.getElementById('windSlider').disabled=true;
+      document.getElementById('windSliderVal').textContent='自动';
+      document.getElementById('timeSlider').disabled=true;
+    }else{
+      state.mode='manual';
+      state.manualScene=key;
+      const slider=document.getElementById('windSlider');
+      slider.disabled=false;
+      if(key==='windy'&&parseFloat(slider.value)===0)slider.value=38;
+      document.getElementById('windSliderVal').textContent=slider.value+' km/h';
+      document.getElementById('timeSlider').disabled=false;
+    }
+    applyScene();
+  });
+});
+document.getElementById('windSlider').addEventListener('input',e=>{
+  document.getElementById('windSliderVal').textContent=e.target.value+' km/h';
+});
+
+/* ============================================================
+   14b. 时间控制（滑块 + 拖动太阳 / 月亮，泰拉瑞亚式）
+   ============================================================ */
+const timeSlider=document.getElementById('timeSlider');
+const timeSliderVal=document.getElementById('timeSliderVal');
+function phaseToClock(ph){
+  let total=((6+ph*24)*60)%(24*60);
+  const h=Math.floor(total/60), m=Math.round(total%60);
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+function syncTimeControl(){
+  if(state.mode==='auto'){
+    timeSliderVal.textContent='自动';
+  }else{
+    timeSlider.value=state.manualPhase;
+    timeSliderVal.textContent=phaseToClock(state.manualPhase);
+  }
+}
+timeSlider.addEventListener('input',e=>{
+  state.manualPhase=parseFloat(e.target.value);
+  timeSliderVal.textContent=phaseToClock(state.manualPhase);
+});
+
+let dragging=false, dragOffset=0;
+let pdHitBody=false, pdMoved=false, pdSX=0, pdSY=0, bodyClicks=0, bodyClickTimer=0;
+function pointerXY(e){
+  const r=canvas.getBoundingClientRect();
+  return {x:e.clientX-r.left,y:e.clientY-r.top};
+}
+function phaseFromX(x){
+  return clamp((x-W*0.1)/(W*0.8),0,1);
+}
+function bodyHit(p){
+  const b=state.body;
+  if(!b)return false;
+  return Math.hypot(p.x-b.x,p.y-b.y)<=(b.type==='sun'?26:23)+20;
+}
+canvas.addEventListener('pointerdown',e=>{
+  pdSX=e.clientX;pdSY=e.clientY;pdMoved=false;
+  pdHitBody=bodyHit(pointerXY(e));
+  if(state.mode!=='manual')return;
+  if(pdHitBody){
+    dragging=true;
+    try{canvas.setPointerCapture(e.pointerId)}catch(_){}
+    dragOffset=state.manualPhase-phaseFromX(pointerXY(e).x);
+    canvas.style.cursor='grabbing';
+  }
+});
+canvas.addEventListener('pointermove',e=>{
+  if(pdHitBody&&Math.hypot(e.clientX-pdSX,e.clientY-pdSY)>5)pdMoved=true;
+  const p=pointerXY(e);
+  if(dragging){
+    state.manualPhase=clamp(phaseFromX(p.x)+dragOffset,0,1);
+  }else if(state.mode==='manual'){
+    canvas.style.cursor=bodyHit(p)?'grab':'default';
+  }else{
+    canvas.style.cursor=bodyHit(p)?'pointer':'default';
+  }
+});
+function endDrag(){
+  if(!dragging)return;
+  dragging=false;
+  canvas.style.cursor=state.mode==='manual'?'grab':'default';
+}
+canvas.addEventListener('pointerup',()=>{
+  endDrag();
+  // 三击太阳 / 月亮：唤出或收起桌面待办悬浮窗
+  if(pdHitBody&&!pdMoved){
+    bodyClicks++;
+    clearTimeout(bodyClickTimer);
+    bodyClickTimer=setTimeout(()=>{bodyClicks=0;},700);
+    if(bodyClicks>=3){bodyClicks=0;toggleFloatBySun();}
+  }
+  pdHitBody=false;
+});
+canvas.addEventListener('pointercancel',()=>{endDrag();pdHitBody=false;});
+
+setInterval(()=>{
+  if(state.mode==='auto'&&Date.now()-state.lastFetch>9*60*1000)fetchWeather();
+},60*1000);
+
+/* ============================================================
+   15. 壁纸选择器（构建缩略图 + 切换 + 持久化）
+   ============================================================ */
+const wpGrid=document.getElementById('wpGrid');
+function buildWallpaperPicker(){
+  wpGrid.innerHTML='';
+  for(const wp of WALLPAPERS){
+    const d=document.createElement('div');
+    d.className='wp-thumb';d.dataset.id=wp.id;
+    d.innerHTML=`<img src="${wp.src}" alt=""><span class="wp-name">${wp.name}</span>`;
+    d.addEventListener('click',()=>selectWallpaper(wp.id));
+    wpGrid.appendChild(d);
+  }
+}
+function selectWallpaper(id){
+  const wp=WALLPAPERS.find(x=>x.id===id); if(!wp)return;
+  state.wallpaper=id;
+  bgImage.src=wp.src;
+  try{localStorage.setItem(WP_STORE,id)}catch(_){}
+  document.querySelectorAll('.wp-thumb').forEach(t=>
+    t.classList.toggle('selected',t.dataset.id===id));
+}
+function initWallpaper(){
+  let saved=null;
+  try{saved=localStorage.getItem(WP_STORE)}catch(_){}
+  selectWallpaper(saved&&WALLPAPERS.some(x=>x.id===saved)?saved:state.wallpaper);
+}
+
+/* ============================================================
+   16. 每日待办清单（localStorage 持久化，可开关，含历史）
+   ============================================================ */
+const TODO_STORE='weather_todo_v1';
+const TODO_SETTINGS='weather_todo_settings_v1';
+const todoPanel=document.getElementById('todoPanel');
+const todoList=document.getElementById('todoList');
+const todoInput=document.getElementById('todoInput');
+const todoCarry=document.getElementById('todoCarry');
+const todoHistory=document.getElementById('todoHistory');
+const TODO_TARGETS=[
+  {list:'todoList',carry:'todoCarry',progress:'todoProgress',date:'todoDate',upcoming:'todoUpcoming'},
+  {list:'ftList',carry:'ftCarry',progress:'ftProgress',date:'ftDate',upcoming:'ftUpcoming'}
+];
+let todoView='today';
+
+function todayStr(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function loadTodos(){
+  let a=[];
+  try{a=JSON.parse(localStorage.getItem(TODO_STORE))||[]}catch(_){return []}
+  if(!Array.isArray(a))a=[];
+  // 旧版待办没有 date 字段：迁移到今天，避免升级后清单“消失”
+  const today=todayStr();let changed=false;
+  for(const it of a){
+    if(!it||typeof it.text!=='string')continue;
+    if(typeof it.done!=='boolean'){it.done=!!it.done;changed=true}
+    if(!it.date){it.date=today;changed=true}
+  }
+  if(changed)saveTodos(a);
+  return a;
+}
+function saveTodos(a){try{localStorage.setItem(TODO_STORE,JSON.stringify(a))}catch(_){}}
+function loadSettings(){try{return JSON.parse(localStorage.getItem(TODO_SETTINGS))||{enabled:true}}catch(_){return {enabled:true}}}
+function saveSettings(s){try{localStorage.setItem(TODO_SETTINGS,JSON.stringify(s))}catch(_){}}
+
+function trashIcon(){
+  return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>';
+}
+function buildTodoRow(it){
+  const li=document.createElement('li');
+  li.className='todo-item'+(it.done?' done':'');
+  li.dataset.id=it.id;
+  li.setAttribute('role','checkbox');
+  li.setAttribute('aria-checked',it.done?'true':'false');
+  li.tabIndex=0;
+  const cb=document.createElement('input');
+  cb.type='checkbox';cb.className='todo-check';cb.checked=it.done;
+  cb.tabIndex=-1;cb.setAttribute('aria-hidden','true');
+  const sp=document.createElement('span');sp.className='todo-text';sp.textContent=it.text;
+  const del=document.createElement('button');del.className='todo-del';del.title='删除';
+  del.setAttribute('aria-label','删除待办');del.innerHTML=trashIcon();
+  li.append(cb,sp,del);
+  return li;
+}
+function dueLabel(d){
+  const today=todayStr();
+  const diff=Math.round((Date.parse(d+'T00:00:00')-Date.parse(today+'T00:00:00'))/86400000);
+  const wd='日一二三四五六'[new Date(d+'T00:00:00').getDay()];
+  const md=d.slice(5).replace('-','/');
+  let p='';
+  if(diff===1)p='明天';
+  else if(diff===2)p='后天';
+  else if(diff===3)p='大后天';
+  return (p?p+' ':'')+md+' 周'+wd;
+}
+function renderTodos(){
+  const today=todayStr();
+  const all=loadTodos();
+  const items=all.filter(x=>x.date===today);
+  const overdue=all.filter(x=>x.date<today&&!x.done);
+  const future=all.filter(x=>x.date>today);
+  const done=items.filter(x=>x.done).length;
+
+  for(const t of TODO_TARGETS){
+    const listEl=document.getElementById(t.list);
+    const carryEl=document.getElementById(t.carry);
+    carryEl.style.display=overdue.length?'block':'none';
+    if(overdue.length)carryEl.textContent=`有 ${overdue.length} 条往期未完成，点击移到今天`;
+
+    listEl.innerHTML='';
+    if(!items.length){
+      const e=document.createElement('li');e.className='todo-empty';e.textContent='今天还没有待办，添加一条吧';
+      listEl.appendChild(e);
+    }
+    for(const it of items)listEl.appendChild(buildTodoRow(it));
+
+    document.getElementById(t.progress).textContent=`已完成 ${done}/${items.length}`;
+    document.getElementById(t.date).textContent=today;
+
+    const up=document.getElementById(t.upcoming);
+    up.innerHTML='';
+    if(!future.length){
+      up.classList.remove('show');
+    }else{
+      up.classList.add('show');
+      const groups={};
+      for(const it of future)(groups[it.date]=groups[it.date]||[]).push(it);
+      for(const d of Object.keys(groups).sort()){
+        const h=document.createElement('div');h.className='upc-head';
+        const l=document.createElement('span');l.textContent=dueLabel(d);
+        const r=document.createElement('b');r.textContent=groups[d].length+' 条';
+        h.append(l,r);up.appendChild(h);
+        for(const it of groups[d])up.appendChild(buildTodoRow(it));
+      }
+    }
+  }
+}
+function addTodoFrom(el,dateEl){
+  const text=el.value.trim();if(!text)return;
+  const today=todayStr();
+  let date=today;
+  if(dateEl&&dateEl.value&&/^\d{4}-\d{2}-\d{2}$/.test(dateEl.value)&&dateEl.value>today)date=dateEl.value;
+  const all=loadTodos();
+  all.push({id:Date.now()+'-'+Math.random().toString(36).slice(2,7),text,done:false,date});
+  saveTodos(all);
+  el.value='';
+  if(dateEl)dateEl.value=today;
+  renderTodos();
+}
+function addTodo(){addTodoFrom(todoInput,document.getElementById('todoDue'));}
+function toggleTodo(id){
+  const all=loadTodos();
+  const it=all.find(x=>x.id===id);
+  if(!it)return;
+  it.done=!it.done;
+  saveTodos(all);
+  if(it.date===todayStr()){
+    // 原地更新，不重建列表：避免点击瞬间节点被替换导致“点了没反应”
+    document.querySelectorAll(`.todo-item[data-id="${id}"]`).forEach(r=>{
+      r.classList.toggle('done',it.done);
+      r.setAttribute('aria-checked',it.done?'true':'false');
+      const cb=r.querySelector('.todo-check');if(cb)cb.checked=it.done;
+    });
+    const items=all.filter(x=>x.date===it.date);
+    const doneN=items.filter(x=>x.done).length;
+    for(const t of TODO_TARGETS)document.getElementById(t.progress).textContent=`已完成 ${doneN}/${items.length}`;
+  }else{
+    renderTodos();
+  }
+  if(todoView!=='today')renderHistory();
+}
+function deleteTodo(id){
+  saveTodos(loadTodos().filter(x=>x.id!==id));
+  renderTodos();
+  if(todoView!=='today')renderHistory();
+}
+function clearDone(){
+  saveTodos(loadTodos().filter(x=>!(x.date===todayStr()&&x.done)));
+  renderTodos();
+}
+function carryOver(){
+  const today=todayStr();
+  const all=loadTodos();
+  let moved=0;
+  for(const it of all){if(it.date<today&&!it.done){it.date=today;moved++}}
+  saveTodos(all);renderTodos();
+  if(moved)setStatus(`已把 ${moved} 条待办移到今天`);
+}
+
+function renderHistory(){
+  const today=todayStr();
+  const past=loadTodos().filter(x=>x.date<today);
+  const groups={};
+  for(const it of past){(groups[it.date]=groups[it.date]||[]).push(it)}
+  const dates=Object.keys(groups).sort().reverse();
+  const hl=document.getElementById('historyList');
+  hl.innerHTML='';
+  if(!dates.length){
+    const e=document.createElement('div');e.className='todo-empty';e.textContent='暂无历史记录';
+    hl.appendChild(e);
+  }
+  for(const d of dates){
+    const h=document.createElement('div');h.className='history-date';
+    const g=groups[d],dn=g.filter(x=>x.done).length;
+    h.textContent=`${d} · 完成 ${dn}/${g.length}`;
+    hl.appendChild(h);
+    for(const it of g)hl.appendChild(buildTodoRow(it));
+  }
+  document.getElementById('historySummary').textContent=`共 ${dates.length} 天记录`;
+}
+function showHistory(){
+  todoView='history';
+  todoList.style.display='none';
+  todoHistory.style.display='flex';
+  document.getElementById('todoFoot').style.display='none';
+  document.getElementById('historyFoot').style.display='flex';
+  document.querySelector('.todo-title').textContent='历史记录';
+  renderHistory();
+}
+function backToToday(){
+  todoView='today';
+  todoList.style.display='flex';
+  todoHistory.style.display='none';
+  document.getElementById('todoFoot').style.display='flex';
+  document.getElementById('historyFoot').style.display='none';
+  document.querySelector('.todo-title').textContent='今日待办';
+  renderTodos();
+}
+function clearHistory(){
+  const today=todayStr();
+  saveTodos(loadTodos().filter(x=>x.date>=today));
+  renderHistory();
+}
+/* --- 待办显示方式：关闭 / 面板内 / 桌面悬浮窗 --- */
+const FT_POS='weather_todo_float_pos_v1';
+const FT_PIN='weather_todo_float_pin_v1';
+const FT_VISIBLE='weather_todo_float_visible_v1';
+const FT_W=352, FT_FALLBACK_H=390;
+const floatTodo=document.getElementById('floatTodo');
+const ftHead=document.getElementById('ftHead');
+const todoFloatBar=document.getElementById('todoFloatBar');
+let todoMode='panel', ftPinned=false;
+
+function loadTodoMode(){
+  const s=loadSettings();
+  if(s.mode==='off'||s.mode==='panel'||s.mode==='float')return s.mode;
+  return s.enabled===false?'off':'panel';
+}
+function saveTodoMode(mode){saveSettings({enabled:mode!=='off',mode});}
+
+function ftClamp(l,t){
+  const w=floatTodo.offsetWidth||FT_W;
+  const h=floatTodo.offsetHeight||FT_FALLBACK_H;
+  return {l:clamp(l,0,Math.max(0,window.innerWidth-w)),t:clamp(t,0,Math.max(0,window.innerHeight-h))};
+}
+function setFloatPos(l,t){
+  const p=ftClamp(l,t);
+  floatTodo.style.left=p.l+'px';floatTodo.style.top=p.t+'px';
+}
+function floatDefaultPos(){
+  setFloatPos(window.innerWidth-FT_W-48,Math.round(window.innerHeight*0.18));
+}
+function updateFloatUI(){
+  const shown=floatTodo.classList.contains('show');
+  document.getElementById('tfbState').textContent=shown?'显示中':'已隐藏';
+  document.getElementById('ftToggleShow').textContent=shown?'隐藏':'显示';
+  document.getElementById('ftPinBtn').textContent=ftPinned?'解除固定':'固定位置';
+  const ph=document.getElementById('ftPinBtnHead');
+  ph.classList.toggle('on',ftPinned);
+  ph.title=ftPinned?'解除固定（恢复可拖动）':'固定位置（锁定后仍可点击勾选）';
+  document.getElementById('ftBadge').textContent=ftPinned?'已固定 · 位置已锁定，仍可点击；点右上角图钉解除':'';
+  document.querySelectorAll('#todoModeSeg .seg-btn').forEach(b=>
+    b.classList.toggle('active',b.dataset.mode===todoMode));
+  todoFloatBar.classList.toggle('show',todoMode==='float');
+}
+function setFloatVisible(v){
+  if(todoMode!=='float')return;
+  floatTodo.classList.toggle('show',v);
+  try{localStorage.setItem(FT_VISIBLE,v?'1':'0')}catch(_){}
+  updateFloatUI();
+}
+function setPinned(p){
+  ftPinned=p;
+  floatTodo.classList.toggle('pinned',p);
+  try{localStorage.setItem(FT_PIN,p?'1':'0')}catch(_){}
+  updateFloatUI();
+}
+function applyTodoMode(mode){
+  todoMode=mode;
+  saveTodoMode(mode);
+  todoPanel.classList.toggle('todo-disabled',mode==='off');
+  if(mode==='float'){
+    let vis=true;
+    try{vis=localStorage.getItem(FT_VISIBLE)!=='0'}catch(_){}
+    floatTodo.classList.toggle('show',vis);
+  }else{
+    floatTodo.classList.remove('show');
+  }
+  updateFloatUI();
+}
+/* 三击太阳：唤出 / 收起桌面待办悬浮窗 */
+function toggleFloatBySun(){
+  if(todoMode==='off')return;
+  if(todoMode!=='float'){applyTodoMode('float');return;}
+  setFloatVisible(!floatTodo.classList.contains('show'));
+}
+
+function bindTodoClicks(el){
+  if(!el)return;
+  el.addEventListener('click',e=>{
+    const del=e.target.closest('.todo-del');
+    if(del){
+      const row=del.closest('.todo-item');
+      if(row&&row.dataset.id)deleteTodo(row.dataset.id);
+      return;
+    }
+    const row=e.target.closest('.todo-item');
+    if(row&&row.dataset.id)toggleTodo(row.dataset.id);
+  });
+  el.addEventListener('keydown',e=>{
+    if(e.key!=='Enter'&&e.key!==' ')return;
+    const row=e.target.closest('.todo-item');
+    if(row&&row.dataset.id&&e.target===row){
+      e.preventDefault();toggleTodo(row.dataset.id);
+    }
+  });
+}
+
+function initTodo(){
+  renderTodos();
+  document.getElementById('todoDue').value=todayStr();
+  document.getElementById('todoAddBtn').addEventListener('click',addTodo);
+  todoInput.addEventListener('keydown',e=>{if(e.key==='Enter')addTodo()});
+  todoCarry.addEventListener('click',carryOver);
+  document.getElementById('todoClearDone').addEventListener('click',clearDone);
+  document.getElementById('todoHistoryBtn').addEventListener('click',showHistory);
+  document.getElementById('historyBackBtn').addEventListener('click',backToToday);
+  document.getElementById('historyClearAll').addEventListener('click',clearHistory);
+
+  // 整行可点：列表用事件委托，点击不再依赖每次重建的节点
+  ['todoList','ftList','todoUpcoming','ftUpcoming','historyList'].forEach(id=>
+    bindTodoClicks(document.getElementById(id)));
+
+  // 悬浮窗内的待办操作（与面板共用同一份数据）
+  document.getElementById('ftAddBtn').addEventListener('click',()=>addTodoFrom(document.getElementById('ftInput')));
+  document.getElementById('ftInput').addEventListener('keydown',e=>{
+    if(e.key==='Enter')addTodoFrom(e.target);
+  });
+  document.getElementById('ftCarry').addEventListener('click',carryOver);
+  document.getElementById('ftClearDone').addEventListener('click',clearDone);
+
+  // 显示方式分段选择
+  document.querySelectorAll('#todoModeSeg .seg-btn').forEach(b=>
+    b.addEventListener('click',()=>applyTodoMode(b.dataset.mode)));
+
+  // 悬浮窗按钮
+  document.getElementById('ftHideBtn').addEventListener('click',()=>setFloatVisible(false));
+  document.getElementById('ftPinBtnHead').addEventListener('click',()=>setPinned(!ftPinned));
+  document.getElementById('ftToggleShow').addEventListener('click',()=>
+    setFloatVisible(!floatTodo.classList.contains('show')));
+  document.getElementById('ftPinBtn').addEventListener('click',()=>setPinned(!ftPinned));
+
+  // 悬浮窗拖动（仅标题栏，固定后不可拖）
+  let ftDown=false,ftMoved=false,ftSX=0,ftSY=0,ftL0=0,ftT0=0;
+  ftHead.addEventListener('pointerdown',e=>{
+    if(ftPinned||e.target.closest('button'))return;
+    ftDown=true;ftMoved=false;ftSX=e.clientX;ftSY=e.clientY;
+    const r=floatTodo.getBoundingClientRect();ftL0=r.left;ftT0=r.top;
+    ftHead.classList.add('dragging');
+    try{ftHead.setPointerCapture(e.pointerId)}catch(_){}
+  });
+  ftHead.addEventListener('pointermove',e=>{
+    if(!ftDown)return;
+    const dx=e.clientX-ftSX,dy=e.clientY-ftSY;
+    if(!ftMoved&&Math.hypot(dx,dy)>4)ftMoved=true;
+    if(ftMoved)setFloatPos(ftL0+dx,ftT0+dy);
+  });
+  ftHead.addEventListener('pointerup',()=>{
+    if(ftDown&&ftMoved){
+      try{localStorage.setItem(FT_POS,JSON.stringify({l:parseFloat(floatTodo.style.left),t:parseFloat(floatTodo.style.top)}))}catch(_){}
+    }
+    ftDown=false;ftHead.classList.remove('dragging');
+  });
+  ftHead.addEventListener('pointercancel',()=>{ftDown=false;ftHead.classList.remove('dragging')});
+
+  // 位置与固定状态恢复
+  let pos=null,pin=false;
+  try{pos=JSON.parse(localStorage.getItem(FT_POS));pin=localStorage.getItem(FT_PIN)==='1'}catch(_){}
+  if(pos&&typeof pos.l==='number')setFloatPos(pos.l,pos.t);else floatDefaultPos();
+  setPinned(pin);
+
+  // 应用上次的显示方式
+  applyTodoMode(loadTodoMode());
+
+  // 窗口尺寸变化时保证悬浮窗仍在屏幕内
+  window.addEventListener('resize',()=>{
+    if(!floatTodo.classList.contains('show'))return;
+    setFloatPos(parseFloat(floatTodo.style.left)||0,parseFloat(floatTodo.style.top)||0);
+  });
+}
+
+/* ============================================================
+   17. 天气小条：拖动 + 点击呼出 + 位置记忆
+   ============================================================ */
+const DOCK_POS='weather_dock_pos_v1';
+const dock=document.getElementById('dock');
+const overlay=document.getElementById('overlay');
+const modal=document.getElementById('modal');
+
+function openModal(){overlay.classList.add('show');modal.classList.add('show');}
+function closeModal(){overlay.classList.remove('show');modal.classList.remove('show');}
+
+let dkDown=false, dkMoved=false, dkStartX=0, dkStartY=0, dkOrigL=0, dkOrigT=0;
+dock.addEventListener('pointerdown',e=>{
+  dkDown=true; dkMoved=false;
+  dkStartX=e.clientX; dkStartY=e.clientY;
+  const r=dock.getBoundingClientRect();
+  dkOrigL=r.left; dkOrigT=r.top;
+  try{dock.setPointerCapture(e.pointerId)}catch(_){}
+});
+dock.addEventListener('pointermove',e=>{
+  if(!dkDown)return;
+  const dx=e.clientX-dkStartX, dy=e.clientY-dkStartY;
+  if(!dkMoved&&Math.hypot(dx,dy)>5)dkMoved=true;
+  if(dkMoved){
+    const nl=clamp(dkOrigL+dx,0,window.innerWidth-dock.offsetWidth);
+    const nt=clamp(dkOrigT+dy,0,window.innerHeight-dock.offsetHeight);
+    dock.style.left=nl+'px';dock.style.top=nt+'px';
+  }
+});
+dock.addEventListener('pointerup',()=>{
+  if(dkDown&&!dkMoved)openModal();
+  if(dkMoved){
+    try{localStorage.setItem(DOCK_POS,JSON.stringify({l:parseFloat(dock.style.left),t:parseFloat(dock.style.top)}))}catch(_){}
+  }
+  dkDown=false;
+});
+dock.addEventListener('pointercancel',()=>{dkDown=false;});
+
+document.getElementById('modalClose').addEventListener('click',closeModal);
+overlay.addEventListener('click',closeModal);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+
+document.querySelectorAll('.tab').forEach(t=>{
+  t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x===t));
+    const key=t.dataset.tab;
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.toggle('active',p.dataset.pane===key));
+  });
+});
+
+function initDockPos(){
+  try{
+    const p=JSON.parse(localStorage.getItem(DOCK_POS));
+    if(p&&typeof p.l==='number'){
+      dock.style.left=clamp(p.l,0,window.innerWidth-dock.offsetWidth)+'px';
+      dock.style.top=clamp(p.t,0,window.innerHeight-dock.offsetHeight)+'px';
+    }
+  }catch(_){}
+}
+
+/* ============================================================
+   18. 启动
+   ============================================================ */
+resize();
+initDockPos();
+initLocation();
+buildWallpaperPicker();
+initWallpaper();
+initTodo();
+fetchWeather();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
